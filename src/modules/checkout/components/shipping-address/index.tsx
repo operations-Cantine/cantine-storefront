@@ -6,6 +6,13 @@ import { mapKeys } from "lodash"
 import React, { useEffect, useMemo, useState } from "react"
 import AddressSelect from "../address-select"
 import CountrySelect from "../country-select"
+import dynamic from "next/dynamic"
+
+// Dynamic import for Leaflet (no SSR)
+const GeolocationMap = dynamic(
+  () => import("../geolocation-map"),
+  { ssr: false, loading: () => <div className="h-[280px] bg-gray-100 rounded-xl animate-pulse flex items-center justify-center text-gray-400">Chargement de la carte…</div> }
+)
 
 const ShippingAddress = ({
   customer,
@@ -31,12 +38,16 @@ const ShippingAddress = ({
     email: cart?.email || "",
   })
 
+  const [deliveryMode, setDeliveryMode] = useState<"delivery" | "pickup">("delivery")
+  const [locationData, setLocationData] = useState<{
+    lat: number; lng: number; zone: string | null; zoneName: string | null; fee: number; estimatedMinutes: number | null
+  } | null>(null)
+
   const countriesInRegion = useMemo(
     () => cart?.region?.countries?.map((c) => c.iso_2),
     [cart?.region]
   )
 
-  // check if customer has saved addresses that are in the current region
   const addressesInRegion = useMemo(
     () =>
       customer?.addresses.filter(
@@ -71,33 +82,95 @@ const ShippingAddress = ({
   }
 
   useEffect(() => {
-    // Ensure cart is not null and has a shipping_address before setting form data
     if (cart && cart.shipping_address) {
       setFormAddress(cart?.shipping_address, cart?.email)
     }
-
     if (cart && !cart.email && customer?.email) {
       setFormAddress(undefined, customer.email)
     }
-  }, [cart]) // Add cart as a dependency
+  }, [cart])
 
   const handleChange = (
-    e: React.ChangeEvent<
-      HTMLInputElement | HTMLInputElement | HTMLSelectElement
-    >
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    })
+    setFormData({ ...formData, [e.target.name]: e.target.value })
+  }
+
+  // When location is selected on map, update the hidden address fields
+  const handleLocationSelect = (data: typeof locationData) => {
+    setLocationData(data)
+    if (data) {
+      setFormData((prev: Record<string, any>) => ({
+        ...prev,
+        "shipping_address.address_1": data.zoneName ? `GPS: ${data.lat.toFixed(6)}, ${data.lng.toFixed(6)} — ${data.zoneName}` : `GPS: ${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}`,
+        "shipping_address.city": "Bamako",
+        "shipping_address.province": data.zoneName || "Bamako",
+        "shipping_address.country_code": "ml",
+        "shipping_address.postal_code": "BP",
+        "shipping_address.company": data.zone || "",
+      }))
+    }
   }
 
   return (
     <>
+      {/* Delivery mode toggle */}
+      <div className="flex gap-2 mb-6">
+        <button
+          type="button"
+          onClick={() => setDeliveryMode("delivery")}
+          className={`flex-1 py-3 rounded-lg text-sm font-semibold transition ${
+            deliveryMode === "delivery"
+              ? "bg-[#083d2a] text-white"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+        >
+          🛵 Livraison
+        </button>
+        <button
+          type="button"
+          onClick={() => setDeliveryMode("pickup")}
+          className={`flex-1 py-3 rounded-lg text-sm font-semibold transition ${
+            deliveryMode === "pickup"
+              ? "bg-[#083d2a] text-white"
+              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+          }`}
+        >
+          🏪 Retrait en magasin
+        </button>
+      </div>
+
+      {deliveryMode === "pickup" ? (
+        /* Pickup mode — just show restaurant info */
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6">
+          <div className="font-semibold text-green-800 mb-1">🏪 Retrait en magasin</div>
+          <div className="text-sm text-green-700">La Cantine Africaine</div>
+          <div className="text-xs text-green-600 mt-1">Gratuit · Prêt en ~15 min après confirmation</div>
+          {/* Hidden fields for Medusa */}
+          <input type="hidden" name="shipping_address.address_1" value="Retrait en magasin — La Cantine Africaine" />
+          <input type="hidden" name="shipping_address.city" value="Bamako" />
+          <input type="hidden" name="shipping_address.country_code" value="ml" />
+          <input type="hidden" name="shipping_address.postal_code" value="BP" />
+        </div>
+      ) : (
+        /* Delivery mode — GPS map */
+        <div className="mb-6">
+          <GeolocationMap onLocationSelect={handleLocationSelect} />
+          {/* Hidden fields populated by map */}
+          <input type="hidden" name="shipping_address.address_1" value={formData["shipping_address.address_1"]} />
+          <input type="hidden" name="shipping_address.city" value={formData["shipping_address.city"]} />
+          <input type="hidden" name="shipping_address.country_code" value={formData["shipping_address.country_code"]} />
+          <input type="hidden" name="shipping_address.postal_code" value={formData["shipping_address.postal_code"]} />
+          <input type="hidden" name="shipping_address.province" value={formData["shipping_address.province"]} />
+          <input type="hidden" name="shipping_address.company" value={formData["shipping_address.company"]} />
+        </div>
+      )}
+
+      {/* Customer info — always needed */}
       {customer && (addressesInRegion?.length || 0) > 0 && (
         <Container className="mb-6 flex flex-col gap-y-4 p-5">
           <p className="text-small-regular">
-            {`Hi ${customer.first_name}, do you want to use one of your saved addresses?`}
+            {`Bonjour ${customer.first_name}, voulez-vous utiliser une adresse enregistrée ?`}
           </p>
           <AddressSelect
             addresses={customer.addresses}
@@ -110,9 +183,10 @@ const ShippingAddress = ({
           />
         </Container>
       )}
+
       <div className="grid grid-cols-2 gap-4">
         <Input
-          label="First name"
+          label="Prénom"
           name="shipping_address.first_name"
           autoComplete="given-name"
           value={formData["shipping_address.first_name"]}
@@ -121,7 +195,7 @@ const ShippingAddress = ({
           data-testid="shipping-first-name-input"
         />
         <Input
-          label="Last name"
+          label="Nom"
           name="shipping_address.last_name"
           autoComplete="family-name"
           value={formData["shipping_address.last_name"]}
@@ -129,74 +203,24 @@ const ShippingAddress = ({
           required
           data-testid="shipping-last-name-input"
         />
-        <Input
-          label="Address"
-          name="shipping_address.address_1"
-          autoComplete="address-line1"
-          value={formData["shipping_address.address_1"]}
-          onChange={handleChange}
-          required
-          data-testid="shipping-address-input"
-        />
-        <Input
-          label="Company"
-          name="shipping_address.company"
-          value={formData["shipping_address.company"]}
-          onChange={handleChange}
-          autoComplete="organization"
-          data-testid="shipping-company-input"
-        />
-        <Input
-          label="Postal code"
-          name="shipping_address.postal_code"
-          autoComplete="postal-code"
-          value={formData["shipping_address.postal_code"]}
-          onChange={handleChange}
-          required
-          data-testid="shipping-postal-code-input"
-        />
-        <Input
-          label="City"
-          name="shipping_address.city"
-          autoComplete="address-level2"
-          value={formData["shipping_address.city"]}
-          onChange={handleChange}
-          required
-          data-testid="shipping-city-input"
-        />
-        <CountrySelect
-          name="shipping_address.country_code"
-          autoComplete="country"
-          region={cart?.region}
-          value={formData["shipping_address.country_code"]}
-          onChange={handleChange}
-          required
-          data-testid="shipping-country-select"
-        />
-        <Input
-          label="State / Province"
-          name="shipping_address.province"
-          autoComplete="address-level1"
-          value={formData["shipping_address.province"]}
-          onChange={handleChange}
-          data-testid="shipping-province-input"
-        />
       </div>
+
       <div className="my-8">
         <Checkbox
-          label="Billing address same as shipping address"
+          label="Adresse de facturation identique à l'adresse de livraison"
           name="same_as_billing"
           checked={checked}
           onChange={onChange}
           data-testid="billing-address-checkbox"
         />
       </div>
+
       <div className="grid grid-cols-2 gap-4 mb-4">
         <Input
           label="Email"
           name="email"
           type="email"
-          title="Enter a valid email address."
+          title="Entrez une adresse email valide."
           autoComplete="email"
           value={formData.email}
           onChange={handleChange}
@@ -204,11 +228,12 @@ const ShippingAddress = ({
           data-testid="shipping-email-input"
         />
         <Input
-          label="Phone"
+          label="Téléphone"
           name="shipping_address.phone"
           autoComplete="tel"
           value={formData["shipping_address.phone"]}
           onChange={handleChange}
+          required
           data-testid="shipping-phone-input"
         />
       </div>
