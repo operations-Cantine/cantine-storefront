@@ -1,72 +1,40 @@
 import { HttpTypes } from "@medusajs/types"
-import React, { useState, useEffect, useRef, useCallback } from "react"
-import dynamic from "next/dynamic"
-
-const GeolocationMap = dynamic(
-  () => import("../geolocation-map"),
-  { ssr: false, loading: () => <div className="py-8 text-center text-gray-400 animate-pulse">Chargement…</div> }
-)
+import React, { useState, useEffect, useRef } from "react"
+import GeolocationMap from "../geolocation-map"
 
 type Step = "location" | "name" | "phone" | "email" | "done"
 
-const CONFETTI_COLORS = ["#083d2a", "#FF6D01", "#76ad2a", "#faa72a", "#2c84db", "#e04343"]
+const CC = ["#083d2a", "#FF6D01", "#76ad2a", "#faa72a", "#2c84db"]
 
 function Confetti() {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
+  const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    canvas.width = window.innerWidth
-    canvas.height = window.innerHeight
-
-    const pieces: { x: number; y: number; w: number; h: number; color: string; vx: number; vy: number; rot: number; vr: number; opacity: number }[] = []
-
-    for (let i = 0; i < 120; i++) {
-      pieces.push({
-        x: Math.random() * canvas.width,
-        y: -20 - Math.random() * 300,
-        w: 6 + Math.random() * 8,
-        h: 4 + Math.random() * 6,
-        color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
-        vx: (Math.random() - 0.5) * 4,
-        vy: 2 + Math.random() * 4,
-        rot: Math.random() * 360,
-        vr: (Math.random() - 0.5) * 10,
-        opacity: 1,
-      })
-    }
-
-    let frame: number
-    const animate = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-      let alive = false
-      for (const p of pieces) {
-        p.x += p.vx
-        p.y += p.vy
-        p.vy += 0.1
-        p.rot += p.vr
-        if (p.y > canvas.height - 50) p.opacity -= 0.02
-        if (p.opacity <= 0) continue
-        alive = true
-        ctx.save()
-        ctx.translate(p.x, p.y)
-        ctx.rotate((p.rot * Math.PI) / 180)
-        ctx.globalAlpha = Math.max(0, p.opacity)
-        ctx.fillStyle = p.color
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h)
-        ctx.restore()
+    const c = ref.current; if (!c) return
+    const ctx = c.getContext("2d"); if (!ctx) return
+    c.width = window.innerWidth; c.height = window.innerHeight
+    const P = Array.from({ length: 60 }, () => ({
+      x: Math.random() * c.width, y: -10 - Math.random() * 200,
+      w: 5 + Math.random() * 6, h: 3 + Math.random() * 5,
+      c: CC[Math.floor(Math.random() * CC.length)],
+      vx: (Math.random() - 0.5) * 3, vy: 2 + Math.random() * 3,
+      r: Math.random() * 6, o: 1,
+    }))
+    let f: number
+    const go = () => {
+      ctx.clearRect(0, 0, c.width, c.height); let alive = false
+      for (const p of P) {
+        p.x += p.vx; p.y += p.vy; p.vy += 0.08; p.r += 0.1
+        if (p.y > c.height - 40) p.o -= 0.03; if (p.o <= 0) continue
+        alive = true; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r)
+        ctx.globalAlpha = p.o; ctx.fillStyle = p.c
+        ctx.fillRect(-p.w/2, -p.h/2, p.w, p.h); ctx.restore()
       }
-      if (alive) frame = requestAnimationFrame(animate)
+      if (alive) f = requestAnimationFrame(go)
     }
-    frame = requestAnimationFrame(animate)
-    return () => cancelAnimationFrame(frame)
+    f = requestAnimationFrame(go)
+    return () => cancelAnimationFrame(f)
   }, [])
-
-  return <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-50" />
+  return <canvas ref={ref} className="fixed inset-0 pointer-events-none z-50" />
 }
 
 function ChatBubble({ children, delay = 0, from = "assistant" }: { children: React.ReactNode; delay?: number; from?: "assistant" | "user" }) {
