@@ -1,0 +1,374 @@
+"use client"
+import React, { useState, useEffect, useRef } from "react"
+import { updateCart, setShippingMethod, initiatePaymentSession, placeOrder } from "@lib/data/cart"
+import { HttpTypes } from "@medusajs/types"
+
+// ── Types ──
+type Step = "mode" | "location" | "name" | "phone" | "crosssell" | "payment" | "summary" | "placing" | "done"
+
+const ZONES = [
+  { name: "Aci 2000", slug: "aci-2000", lat: 12.6127, lng: -8.0090, fee: 500, r: 1.5, time: 20 },
+  { name: "Badalabougou", slug: "badalabougou", lat: 12.6200, lng: -7.9880, fee: 500, r: 1.5, time: 25 },
+  { name: "Lafiabougou", slug: "lafiabougou", lat: 12.6350, lng: -8.0300, fee: 750, r: 1.5, time: 30 },
+  { name: "Quinzanbougou", slug: "quinzanbougou", lat: 12.6450, lng: -8.0050, fee: 500, r: 1.0, time: 15 },
+  { name: "Hamdallaye", slug: "hamdallaye", lat: 12.6080, lng: -8.0200, fee: 500, r: 1.5, time: 20 },
+  { name: "Hippodrome", slug: "hippodrome", lat: 12.6500, lng: -8.0150, fee: 750, r: 1.5, time: 25 },
+  { name: "Kalaban Coura", slug: "kalaban-coura", lat: 12.5850, lng: -8.0400, fee: 1000, r: 2.0, time: 35 },
+  { name: "Magnambougou", slug: "magnambougou", lat: 12.5700, lng: -8.0100, fee: 1000, r: 2.0, time: 40 },
+]
+
+const PAYMENTS = [
+  { id: "cash", label: "Espèces", icon: "💵", desc: "Payez le livreur à la réception" },
+  { id: "orange_money", label: "Orange Money", icon: "🟠", desc: "Paiement mobile Orange" },
+  { id: "wave", label: "Wave", icon: "🌊", desc: "Paiement mobile Wave" },
+  { id: "moov_money", label: "Moov Money", icon: "📱", desc: "Paiement mobile Moov" },
+  { id: "carte_cantine", label: "Carte Cantine", icon: "💳", desc: "Votre portefeuille prépayé" },
+]
+
+const CC = ["#083d2a", "#FF6D01", "#76ad2a", "#faa72a", "#2c84db"]
+
+function distKm(a: number, b: number, c: number, d: number) {
+  const R = 6371, dL = (c-a)*Math.PI/180, dG = (d-b)*Math.PI/180
+  const x = Math.sin(dL/2)**2 + Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dG/2)**2
+  return R*2*Math.atan2(Math.sqrt(x), Math.sqrt(1-x))
+}
+
+function findZone(lat: number, lng: number) {
+  let best = null, min = Infinity
+  for (const z of ZONES) { const d = distKm(lat, lng, z.lat, z.lng); if (d < z.r && d < min) { best = z; min = d } }
+  return best
+}
+
+const fmt = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`
+
+// ── Confetti ──
+function Confetti() {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const c = ref.current; if (!c) return
+    const ctx = c.getContext("2d"); if (!ctx) return
+    c.width = window.innerWidth; c.height = window.innerHeight
+    const P = Array.from({ length: 60 }, () => ({
+      x: Math.random()*c.width, y: -10-Math.random()*200, w: 5+Math.random()*6, h: 3+Math.random()*5,
+      c: CC[Math.floor(Math.random()*CC.length)], vx: (Math.random()-0.5)*3, vy: 2+Math.random()*3, r: Math.random()*6, o: 1,
+    }))
+    let f: number
+    const go = () => {
+      ctx.clearRect(0, 0, c.width, c.height); let alive = false
+      for (const p of P) { p.x+=p.vx; p.y+=p.vy; p.vy+=0.08; p.r+=0.1; if(p.y>c.height-40) p.o-=0.03; if(p.o<=0) continue; alive=true; ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.r); ctx.globalAlpha=p.o; ctx.fillStyle=p.c; ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h); ctx.restore() }
+      if (alive) f = requestAnimationFrame(go)
+    }
+    f = requestAnimationFrame(go)
+    return () => cancelAnimationFrame(f)
+  }, [])
+  return <canvas ref={ref} className="fixed inset-0 pointer-events-none z-50" />
+}
+
+// ── Chat UI ──
+function Bot({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
+  const [show, setShow] = useState(delay === 0)
+  useEffect(() => { if (delay > 0) { const t = setTimeout(() => setShow(true), delay); return () => clearTimeout(t) } }, [delay])
+  if (!show) return <div className="h-8" />
+  return <div className="flex justify-start" style={{ animation: "fadeUp 0.25s ease-out" }}><div className="max-w-[90%] px-4 py-3 bg-white border border-gray-100 rounded-2xl rounded-bl-md shadow-sm text-sm leading-relaxed text-gray-800">{children}</div></div>
+}
+
+function User({ children }: { children: React.ReactNode }) {
+  return <div className="flex justify-end" style={{ animation: "fadeUp 0.2s ease-out" }}><div className="max-w-[80%] px-4 py-2.5 bg-[#083d2a] text-white rounded-2xl rounded-br-md text-sm">{children}</div></div>
+}
+
+function Choices({ options, onSelect }: { options: { id: string; label: string; icon?: string; sub?: string }[]; onSelect: (id: string) => void }) {
+  return (
+    <div className="flex flex-wrap gap-2" style={{ animation: "fadeUp 0.25s ease-out" }}>
+      {options.map(o => (
+        <button key={o.id} type="button" onClick={() => onSelect(o.id)}
+          className="px-4 py-3 bg-white border-2 border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:border-[#083d2a] hover:bg-[#083d2a]/5 hover:text-[#083d2a] transition active:scale-[0.97] text-left">
+          {o.icon && <span className="mr-1.5">{o.icon}</span>}{o.label}
+          {o.sub && <span className="block text-xs font-normal text-gray-400 mt-0.5">{o.sub}</span>}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function Input({ placeholder, type = "text", onSubmit, autoComplete }: { placeholder: string; type?: string; onSubmit: (v: string) => void; autoComplete?: string }) {
+  const [v, setV] = useState("")
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { setTimeout(() => ref.current?.focus(), 200) }, [])
+  return (
+    <form onSubmit={e => { e.preventDefault(); if (v.trim()) onSubmit(v.trim()) }} className="flex gap-2" style={{ animation: "fadeUp 0.25s ease-out" }}>
+      <input ref={ref} type={type} value={v} onChange={e => setV(e.target.value)} placeholder={placeholder} autoComplete={autoComplete}
+        className="flex-1 h-12 px-4 rounded-xl border border-gray-200 text-base focus:outline-none focus:border-[#083d2a] focus:ring-2 focus:ring-[#083d2a]/10" />
+      <button type="submit" disabled={!v.trim()}
+        className={`h-12 w-12 rounded-xl font-bold text-lg transition ${v.trim() ? "bg-[#083d2a] text-white" : "bg-gray-200 text-gray-400"}`}>→</button>
+    </form>
+  )
+}
+
+// ── Main Component ──
+export default function ConversationalCheckout({
+  cart,
+  shippingMethods,
+  paymentMethods,
+}: {
+  cart: HttpTypes.StoreCart
+  shippingMethods: HttpTypes.StoreCartShippingOption[]
+  paymentMethods: any[]
+}) {
+  const [step, setStep] = useState<Step>("mode")
+  const [mode, setMode] = useState<"delivery" | "pickup" | null>(null)
+  const [zone, setZone] = useState<typeof ZONES[0] | null>(null)
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
+  const [name, setName] = useState(cart.shipping_address?.first_name || "")
+  const [phone, setPhone] = useState(cart.shipping_address?.phone || "")
+  const [payment, setPayment] = useState<string | null>(null)
+  const [crossSellAccepted, setCrossSellAccepted] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [confetti, setConfetti] = useState(false)
+  const [orderId, setOrderId] = useState("")
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }) }, [step, zone, error])
+
+  // Find shipping option IDs
+  const deliveryOption = shippingMethods.find(m => m.name?.includes("Livraison"))
+  const pickupOption = shippingMethods.find(m => m.name?.includes("Retrait"))
+
+  // Cart items summary
+  const items = cart.items || []
+  const cartTotal = cart.item_total || 0
+
+  // ── Handlers ──
+  const chooseMode = async (m: string) => {
+    setMode(m as any)
+    if (m === "pickup") {
+      // Set address + shipping for pickup
+      await updateCart({
+        email: "pos@lacantineafricaine.com",
+        shipping_address: { first_name: "Client", last_name: "Retrait", address_1: "Retrait en magasin", city: "Bamako", country_code: "ml", postal_code: "BP", phone: "" },
+        billing_address: { first_name: "Client", last_name: "Retrait", address_1: "Retrait en magasin", city: "Bamako", country_code: "ml", postal_code: "BP", phone: "" },
+      })
+      if (pickupOption) await setShippingMethod({ cartId: cart.id, shippingMethodId: pickupOption.id })
+      setStep("name")
+    } else {
+      setStep("location")
+      // Auto-geolocate
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => { const z = findZone(pos.coords.latitude, pos.coords.longitude); setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setZone(z); },
+          () => {},
+          { enableHighAccuracy: true, timeout: 8000 }
+        )
+      }
+    }
+  }
+
+  const confirmZone = async (z: typeof ZONES[0]) => {
+    setZone(z)
+    setCoords({ lat: z.lat, lng: z.lng })
+    await updateCart({
+      email: "client@lacantineafricaine.com",
+      shipping_address: { first_name: "Client", last_name: "Livraison", address_1: `GPS: ${z.lat}, ${z.lng} — ${z.name}`, city: "Bamako", country_code: "ml", postal_code: "BP", phone: "" },
+      billing_address: { first_name: "Client", last_name: "Livraison", address_1: `GPS: ${z.lat}, ${z.lng}`, city: "Bamako", country_code: "ml", postal_code: "BP", phone: "" },
+    })
+    if (deliveryOption) await setShippingMethod({ cartId: cart.id, shippingMethodId: deliveryOption.id })
+    setStep("name")
+  }
+
+  const submitName = async (v: string) => {
+    setName(v)
+    await updateCart({ shipping_address: { first_name: v, last_name: v, address_1: cart.shipping_address?.address_1 || "Bamako", city: "Bamako", country_code: "ml", postal_code: "BP", phone: "" } })
+    setStep("phone")
+  }
+
+  const submitPhone = async (v: string) => {
+    setPhone(v)
+    await updateCart({ email: `${v.replace(/\s/g, "")}@sms.lacantineafricaine.com`, shipping_address: { first_name: name, last_name: name, address_1: cart.shipping_address?.address_1 || "Bamako", city: "Bamako", country_code: "ml", postal_code: "BP", phone: v } })
+    setStep("crosssell")
+  }
+
+  const handleCrossSell = (accepted: boolean) => {
+    setCrossSellAccepted(accepted)
+    setStep("payment")
+  }
+
+  const choosePayment = async (p: string) => {
+    setPayment(p)
+    // Init payment session with system default provider
+    try {
+      await initiatePaymentSession(cart, { provider_id: "pp_system_default" })
+    } catch {}
+    setStep("summary")
+  }
+
+  const confirmOrder = async () => {
+    setStep("placing")
+    setError(null)
+    try {
+      const result = await placeOrder()
+      if (result?.type === "order" && result.order) {
+        setOrderId(result.order.display_id?.toString() || result.order.id)
+        setStep("done")
+        setConfetti(true)
+        setTimeout(() => setConfetti(false), 4000)
+      } else {
+        setError("Erreur lors de la commande. Réessayez.")
+        setStep("summary")
+      }
+    } catch (e: any) {
+      setError(e.message || "Erreur")
+      setStep("summary")
+    }
+  }
+
+  const shippingFee = mode === "pickup" ? 0 : (zone?.fee || 500)
+  const total = cartTotal + shippingFee
+
+  // ── Render ──
+  const past = (s: Step) => {
+    const order: Step[] = ["mode", "location", "name", "phone", "crosssell", "payment", "summary", "placing", "done"]
+    return order.indexOf(step) > order.indexOf(s)
+  }
+
+  return (
+    <div className="max-w-lg mx-auto space-y-3 py-4">
+      {confetti && <Confetti />}
+
+      {/* Cart summary at top */}
+      <div className="bg-[#083d2a]/5 rounded-2xl p-4 mb-4">
+        <div className="text-xs font-semibold text-[#083d2a] uppercase tracking-wider mb-2">Votre commande</div>
+        {items.map((item: any) => (
+          <div key={item.id} className="flex justify-between text-sm py-1">
+            <span>{item.quantity}× {item.product_title || item.title}</span>
+            <span className="font-semibold tabular-nums">{fmt(item.unit_price * item.quantity)}</span>
+          </div>
+        ))}
+        <div className="border-t border-[#083d2a]/10 mt-2 pt-2 flex justify-between font-bold text-sm">
+          <span>Sous-total</span><span>{fmt(cartTotal)}</span>
+        </div>
+      </div>
+
+      {/* ── MODE ── */}
+      <Bot>Bienvenue ! 👋 Comment souhaitez-vous recevoir votre commande ?</Bot>
+      {step === "mode" && <Choices options={[{ id: "delivery", label: "Livraison", icon: "🛵", sub: "À domicile" }, { id: "pickup", label: "Retrait en magasin", icon: "🏪", sub: "Gratuit" }]} onSelect={chooseMode} />}
+      {past("mode") && <User>{mode === "pickup" ? "🏪 Retrait en magasin" : "🛵 Livraison"}</User>}
+
+      {/* ── LOCATION ── */}
+      {past("mode") && mode === "delivery" && (
+        <>
+          <Bot delay={200}>{zone ? `📍 Vous êtes à ${zone.name} (${fmt(zone.fee)} livraison, ~${zone.time} min). C'est correct ?` : "📍 Localisation en cours... Sinon, choisissez votre quartier :"}</Bot>
+          {step === "location" && (
+            <div className="space-y-2" style={{ animation: "fadeUp 0.25s ease-out" }}>
+              {zone && (
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => confirmZone(zone)} className="flex-1 py-3 bg-[#FF6D01] text-white font-bold rounded-xl active:scale-[0.97]" style={{ boxShadow: "0 3px 12px rgba(255,109,1,0.3)" }}>
+                    ✓ Oui, c'est ici
+                  </button>
+                  <button type="button" onClick={() => setZone(null)} className="px-4 py-3 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium">Changer</button>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                {ZONES.map(z => (
+                  <button key={z.slug} type="button" onClick={() => confirmZone(z)}
+                    className={`py-2.5 px-3 rounded-xl border text-left text-sm transition active:scale-[0.97] ${zone?.slug === z.slug ? "border-[#083d2a] bg-[#083d2a]/5" : "border-gray-200 hover:border-[#083d2a]/30"}`}>
+                    <div className="font-semibold">{z.name}</div>
+                    <div className="text-xs text-gray-500">{fmt(z.fee)} · ~{z.time} min</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {past("location") && zone && <User>📍 {zone.name}</User>}
+        </>
+      )}
+
+      {/* ── NAME ── */}
+      {past("location") && <Bot delay={200}>{mode === "pickup" ? "Parfait ! Comment vous appelez-vous ?" : zone ? `Super, livraison à ${zone.name} ! Comment vous appelez-vous ?` : "Comment vous appelez-vous ?"}</Bot>}
+      {step === "name" && <Input placeholder="Votre prénom" autoComplete="given-name" onSubmit={submitName} />}
+      {past("name") && <User>{name}</User>}
+
+      {/* ── PHONE ── */}
+      {past("name") && <Bot delay={200}>Enchanté {name} ! 📱 Votre numéro pour {mode === "pickup" ? "vous prévenir" : "le livreur"} ?</Bot>}
+      {step === "phone" && <Input placeholder="70 XX XX XX" type="tel" autoComplete="tel" onSubmit={submitPhone} />}
+      {past("phone") && <User>{phone}</User>}
+
+      {/* ── CROSS-SELL ── */}
+      {past("phone") && (
+        <Bot delay={300}>
+          <div>Un petit extra ? 😋</div>
+          <div className="mt-2 p-2 bg-gray-50 rounded-lg flex items-center gap-3">
+            <div className="text-2xl">🍮</div>
+            <div className="flex-1"><div className="font-semibold text-sm">Deguê</div><div className="text-xs text-gray-500">Dessert traditionnel malien · 500 FCFA</div></div>
+          </div>
+        </Bot>
+      )}
+      {step === "crosssell" && <Choices options={[{ id: "yes", label: "Oui, j'ajoute !", icon: "✓" }, { id: "no", label: "Non merci" }]} onSelect={(id) => handleCrossSell(id === "yes")} />}
+      {past("crosssell") && <User>{crossSellAccepted ? "✓ Deguê ajouté !" : "Non merci"}</User>}
+
+      {/* ── PAYMENT ── */}
+      {past("crosssell") && <Bot delay={200}>Comment souhaitez-vous payer ?</Bot>}
+      {step === "payment" && <Choices options={PAYMENTS.map(p => ({ id: p.id, label: p.label, icon: p.icon, sub: p.desc }))} onSelect={choosePayment} />}
+      {past("payment") && payment && <User>{PAYMENTS.find(p => p.id === payment)?.icon} {PAYMENTS.find(p => p.id === payment)?.label}</User>}
+
+      {/* ── SUMMARY ── */}
+      {past("payment") && (
+        <Bot delay={200}>
+          <div className="font-semibold mb-2">Récapitulatif de votre commande :</div>
+          {items.map((item: any) => (
+            <div key={item.id} className="flex justify-between text-sm py-0.5">
+              <span>{item.quantity}× {item.product_title || item.title}</span>
+              <span className="tabular-nums">{fmt(item.unit_price * item.quantity)}</span>
+            </div>
+          ))}
+          {crossSellAccepted && <div className="flex justify-between text-sm py-0.5"><span>1× Deguê</span><span className="tabular-nums">{fmt(500)}</span></div>}
+          <div className="border-t border-gray-200 mt-2 pt-2 space-y-0.5 text-sm">
+            {mode === "delivery" && <div className="flex justify-between"><span>Livraison ({zone?.name})</span><span className="tabular-nums">{fmt(shippingFee)}</span></div>}
+            {mode === "pickup" && <div className="flex justify-between"><span>Retrait en magasin</span><span className="text-green-600">Gratuit</span></div>}
+            <div className="flex justify-between font-bold text-base pt-1"><span>Total</span><span className="text-[#083d2a]">{fmt(total + (crossSellAccepted ? 500 : 0))}</span></div>
+          </div>
+          <div className="text-xs text-gray-500 mt-2">Paiement: {PAYMENTS.find(p => p.id === payment)?.label}</div>
+        </Bot>
+      )}
+      {step === "summary" && (
+        <div style={{ animation: "fadeUp 0.25s ease-out" }}>
+          {error && <div className="bg-red-50 text-red-700 text-sm rounded-xl px-4 py-2 mb-2">{error}</div>}
+          <button type="button" onClick={confirmOrder}
+            className="w-full py-4 bg-[#FF6D01] text-white font-bold text-base rounded-xl active:scale-[0.98] transition"
+            style={{ boxShadow: "0 4px 16px rgba(255,109,1,0.35)" }}>
+            ✓ Confirmer ma commande
+          </button>
+        </div>
+      )}
+
+      {/* ── PLACING ── */}
+      {step === "placing" && (
+        <div className="flex items-center justify-center py-6 gap-3">
+          <div className="w-5 h-5 border-2 border-[#083d2a] border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm text-gray-600">Envoi de votre commande...</span>
+        </div>
+      )}
+
+      {/* ── DONE ── */}
+      {step === "done" && (
+        <div className="text-center py-8" style={{ animation: "fadeUp 0.3s ease-out" }}>
+          <div className="text-6xl mb-4">🎉</div>
+          <div className="text-2xl font-bold text-[#083d2a]">Commande confirmée !</div>
+          <div className="text-gray-600 mt-2">Commande #{orderId}</div>
+          <div className="text-sm text-gray-500 mt-1">
+            {mode === "pickup" ? "Prête dans ~15 min au restaurant" : `Livraison à ${zone?.name} dans ~${zone?.time} min`}
+          </div>
+          <div className="mt-4 text-sm text-gray-500">📱 Vous recevrez un message WhatsApp de confirmation</div>
+          <a href={`https://wa.me/22360611097?text=Commande%20%23${orderId}`} target="_blank" rel="noreferrer"
+            className="inline-block mt-4 px-6 py-3 bg-[#25D366] text-white font-semibold rounded-xl text-sm hover:brightness-110">
+            Contacter sur WhatsApp
+          </a>
+        </div>
+      )}
+
+      <div ref={bottomRef} />
+
+      <style jsx>{`
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+      `}</style>
+    </div>
+  )
+}
