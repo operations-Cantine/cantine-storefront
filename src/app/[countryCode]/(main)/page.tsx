@@ -34,8 +34,8 @@ export default async function Home(props: {
 
       {/* Category quick links — full bleed */}
       {categories && categories.length > 0 && (
-        <div className="w-full overflow-x-auto py-4 px-4 bg-white border-b border-ui-border-base">
-          <div className="flex gap-2">
+        <div className="w-full overflow-x-auto py-4 bg-white border-b border-ui-border-base scrollbar-hide">
+          <div className="flex gap-2 px-4">
             {categories.map((cat) => (
               <LocalizedClientLink
                 key={cat.id}
@@ -45,6 +45,7 @@ export default async function Home(props: {
                 {cat.name}
               </LocalizedClientLink>
             ))}
+            <div className="flex-shrink-0 w-4" aria-hidden="true" />
           </div>
         </div>
       )}
