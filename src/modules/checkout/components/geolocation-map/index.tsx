@@ -13,8 +13,8 @@ const ZONES = [
 ]
 
 function distKm(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const R = 6371, dLat = (lat2 - lat1) * Math.PI / 180, dLng = (lng2 - lng1) * Math.PI / 180
-  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2
+  const R = 6371, dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
 }
 
@@ -24,12 +24,17 @@ function findZone(lat: number, lng: number) {
   return best
 }
 
+// OpenStreetMap static tile URL — zero API key, zero cost
+function mapPreviewUrl(lat: number, lng: number) {
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${lng-0.008},${lat-0.005},${lng+0.008},${lat+0.005}&layer=mapnik&marker=${lat},${lng}`
+}
+
 type Props = {
   onLocationConfirmed: (data: { lat: number; lng: number; zone: string | null; zoneName: string | null; fee: number; estimatedMinutes: number | null }) => void
 }
 
 export default function GeolocationMap({ onLocationConfirmed }: Props) {
-  const [phase, setPhase] = useState<"idle" | "locating" | "found" | "notfound" | "error" | "manual">("idle")
+  const [phase, setPhase] = useState<"locating" | "confirm" | "adjusting" | "manual" | "error">("locating")
   const [zone, setZone] = useState<typeof ZONES[0] | null>(null)
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
 
@@ -38,18 +43,16 @@ export default function GeolocationMap({ onLocationConfirmed }: Props) {
     setPhase("locating")
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const { latitude, longitude } = pos.coords
-        setCoords({ lat: latitude, lng: longitude })
-        const z = findZone(latitude, longitude)
-        setZone(z)
-        setPhase(z ? "found" : "notfound")
+        const lat = pos.coords.latitude, lng = pos.coords.longitude
+        setCoords({ lat, lng })
+        setZone(findZone(lat, lng))
+        setPhase("confirm")
       },
-      () => { setPhase("error") },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      () => setPhase("error"),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
     )
   }
 
-  // Auto-locate on mount
   useEffect(() => { locate() }, [])
 
   const confirm = () => {
@@ -62,9 +65,7 @@ export default function GeolocationMap({ onLocationConfirmed }: Props) {
   }
 
   const selectManual = (z: typeof ZONES[0]) => {
-    setZone(z)
-    setCoords({ lat: z.lat, lng: z.lng })
-    setPhase("found")
+    setZone(z); setCoords({ lat: z.lat, lng: z.lng }); setPhase("confirm")
   }
 
   // ── LOCATING ──
@@ -76,60 +77,68 @@ export default function GeolocationMap({ onLocationConfirmed }: Props) {
     </div>
   )
 
-  // ── FOUND ──
-  if (phase === "found" && zone) return (
+  // ── CONFIRM — GPS found, show map preview ──
+  if (phase === "confirm" && coords) return (
     <div className="space-y-3">
-      <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center justify-between">
-        <div>
-          <div className="font-bold text-green-800">📍 {zone.name}</div>
-          <div className="text-green-600 text-xs mt-0.5">~{zone.time} min · Livraison disponible</div>
-        </div>
-        <div className="text-right">
+      {/* Map preview — OpenStreetMap iframe, zero JS, shows pin */}
+      <div className="rounded-xl overflow-hidden border border-gray-200" style={{ height: 200 }}>
+        <iframe
+          src={mapPreviewUrl(coords.lat, coords.lng)}
+          className="w-full h-full border-0"
+          loading="lazy"
+          title="Votre position"
+        />
+      </div>
+
+      {/* Zone info */}
+      {zone ? (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-3 flex items-center justify-between">
+          <div>
+            <div className="font-bold text-green-800 text-sm">📍 {zone.name}</div>
+            <div className="text-green-600 text-xs">~{zone.time} min de livraison</div>
+          </div>
           <div className="font-bold text-green-800 text-lg">{zone.fee.toLocaleString("fr-FR")} F</div>
         </div>
-      </div>
-      <button type="button" onClick={confirm}
-        className="w-full py-3.5 rounded-xl bg-[#FF6D01] text-white font-bold text-sm hover:brightness-110 active:scale-[0.99] transition"
-        style={{ boxShadow: "0 3px 12px rgba(255,109,1,0.3)" }}>
-        Confirmer ma position
-      </button>
-      <button type="button" onClick={() => setPhase("manual")} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">
-        Ce n'est pas le bon quartier ? Choisir manuellement
-      </button>
-    </div>
-  )
-
-  // ── NOT FOUND / ERROR ──
-  if (phase === "notfound" || phase === "error") return (
-    <div className="space-y-3">
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
-        <div className="text-2xl mb-2">{phase === "error" ? "📍" : "⚠️"}</div>
-        <div className="font-semibold text-amber-800 text-sm">
-          {phase === "error" ? "Localisation non disponible" : "Zone non couverte"}
+      ) : (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+          <div className="font-semibold text-amber-800 text-sm">Zone non couverte</div>
+          <div className="text-amber-600 text-xs">Choisissez votre quartier manuellement</div>
         </div>
-        <div className="text-amber-600 text-xs mt-1">Sélectionnez votre quartier ci-dessous</div>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {ZONES.map(z => (
-          <button key={z.slug} type="button" onClick={() => selectManual(z)}
-            className="py-3 px-3 rounded-xl border border-gray-200 text-left hover:border-[#083d2a] hover:bg-[#083d2a]/5 transition">
-            <div className="font-semibold text-sm">{z.name}</div>
-            <div className="text-xs text-gray-500">{z.fee.toLocaleString("fr-FR")} F · ~{z.time} min</div>
-          </button>
-        ))}
-      </div>
-      {phase === "error" && (
-        <button type="button" onClick={locate} className="w-full text-xs text-[#083d2a] font-medium hover:underline py-1">
-          Réessayer la localisation
+      )}
+
+      {/* Actions */}
+      {zone && (
+        <button type="button" onClick={confirm}
+          className="w-full py-3.5 rounded-xl bg-[#FF6D01] text-white font-bold text-sm active:scale-[0.99] transition"
+          style={{ boxShadow: "0 3px 12px rgba(255,109,1,0.3)" }}>
+          ✓ Oui, c'est ici
         </button>
       )}
+
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setPhase("manual")}
+          className="flex-1 py-2.5 rounded-xl border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50">
+          Choisir un autre quartier
+        </button>
+        <button type="button" onClick={locate}
+          className="flex-1 py-2.5 rounded-xl border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50">
+          Relocaliser
+        </button>
+      </div>
     </div>
   )
 
-  // ── MANUAL ZONE SELECT ──
-  if (phase === "manual") return (
+  // ── ERROR ──
+  if (phase === "error") return (
     <div className="space-y-3">
-      <div className="text-sm font-medium text-gray-600 mb-1">Sélectionnez votre quartier :</div>
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+        <div className="text-2xl mb-2">📍</div>
+        <div className="font-semibold text-amber-800 text-sm">Localisation non disponible</div>
+        <div className="text-amber-600 text-xs mt-1">Activez le GPS ou sélectionnez votre quartier</div>
+      </div>
+      <button type="button" onClick={locate} className="w-full py-3 rounded-xl bg-[#083d2a] text-white text-sm font-semibold">
+        📍 Réessayer
+      </button>
       <div className="grid grid-cols-2 gap-2">
         {ZONES.map(z => (
           <button key={z.slug} type="button" onClick={() => selectManual(z)}
@@ -142,11 +151,24 @@ export default function GeolocationMap({ onLocationConfirmed }: Props) {
     </div>
   )
 
-  // ── IDLE (shouldn't reach) ──
-  return (
-    <button type="button" onClick={locate}
-      className="w-full py-4 rounded-xl bg-[#083d2a] text-white font-bold text-sm">
-      📍 Me localiser
-    </button>
+  // ── MANUAL ──
+  if (phase === "manual") return (
+    <div className="space-y-3">
+      <div className="text-sm font-medium text-gray-600">Sélectionnez votre quartier :</div>
+      <div className="grid grid-cols-2 gap-2">
+        {ZONES.map(z => (
+          <button key={z.slug} type="button" onClick={() => selectManual(z)}
+            className="py-3 px-3 rounded-xl border border-gray-200 text-left hover:border-[#083d2a] hover:bg-[#083d2a]/5 transition">
+            <div className="font-semibold text-sm">{z.name}</div>
+            <div className="text-xs text-gray-500">{z.fee.toLocaleString("fr-FR")} F · ~{z.time} min</div>
+          </button>
+        ))}
+      </div>
+      <button type="button" onClick={locate} className="w-full text-xs text-[#083d2a] font-medium hover:underline py-1">
+        ← Réessayer la localisation GPS
+      </button>
+    </div>
   )
+
+  return null
 }
