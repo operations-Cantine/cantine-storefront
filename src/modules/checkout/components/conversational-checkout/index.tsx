@@ -90,8 +90,13 @@ function Bot({ children, delay = 0 }: { children: React.ReactNode; delay?: numbe
   return <div className="flex justify-start" style={{ animation: "fadeUp 0.25s ease-out" }}><div className="max-w-[90%] px-4 py-3 bg-white border border-gray-100 rounded-2xl rounded-bl-md shadow-sm text-sm leading-relaxed text-gray-800">{children}</div></div>
 }
 
-function User({ children }: { children: React.ReactNode }) {
-  return <div className="flex justify-end" style={{ animation: "fadeUp 0.2s ease-out" }}><div className="max-w-[80%] px-4 py-2.5 bg-[#083d2a] text-white rounded-2xl rounded-br-md text-sm">{children}</div></div>
+function User({ children, onEdit }: { children: React.ReactNode; onEdit?: () => void }) {
+  return (
+    <div className="flex items-center justify-end gap-2" style={{ animation: "fadeUp 0.2s ease-out" }}>
+      {onEdit && <button type="button" onClick={onEdit} className="text-xs text-gray-400 hover:text-[#083d2a] transition">Modifier</button>}
+      <div className="max-w-[80%] px-4 py-2.5 bg-[#083d2a] text-white rounded-2xl rounded-br-md text-sm">{children}</div>
+    </div>
+  )
 }
 
 function Choices({ options, onSelect }: { options: { id: string; label: string; icon?: string; sub?: string }[]; onSelect: (id: string) => void }) {
@@ -270,7 +275,7 @@ export default function ConversationalCheckout({
       {step === "mode" && (
         <Choices options={[{ id: "delivery", label: "Livraison", icon: "🛵", sub: "À domicile" }, { id: "pickup", label: "Retrait en magasin", icon: "🏪", sub: "Gratuit" }]} onSelect={chooseMode} />
       )}
-      {past("mode") && <User>{mode === "pickup" ? "🏪 Retrait en magasin" : "🛵 Livraison"}</User>}
+      {past("mode") && <User onEdit={() => { setMode(null); setStep("mode") }}>{mode === "pickup" ? "🏪 Retrait en magasin" : "🛵 Livraison"}</User>}
 
       {/* ── LOCATION ── */}
       {past("mode") && mode === "delivery" && (
@@ -278,7 +283,6 @@ export default function ConversationalCheckout({
           <Bot delay={200}>{zone ? `📍 Vous êtes à ${zone.name} (${fmt(zone.fee)} livraison, ~${zone.time} min). C'est correct ?` : "📍 Localisation en cours... Sinon, choisissez votre quartier :"}</Bot>
           {step === "location" && (
             <div className="space-y-2" style={{ animation: "fadeUp 0.25s ease-out" }}>
-              <BackLink onClick={() => { setMode(null); setStep("mode") }} />
               {zone && (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => confirmZone(zone)} className="flex-1 py-3 bg-[#FF6D01] text-white font-bold rounded-xl active:scale-[0.97]" style={{ boxShadow: "0 3px 12px rgba(255,109,1,0.3)" }}>
@@ -298,19 +302,19 @@ export default function ConversationalCheckout({
               </div>
             </div>
           )}
-          {past("location") && zone && <User>📍 {zone.name}</User>}
+          {past("location") && zone && <User onEdit={() => setStep("location")}>📍 {zone.name}</User>}
         </>
       )}
 
       {/* ── NAME ── */}
       {past("location") && <Bot delay={200}>{mode === "pickup" ? "Parfait ! Comment vous appelez-vous ?" : zone ? `Super, livraison à ${zone.name} ! Comment vous appelez-vous ?` : "Comment vous appelez-vous ?"}</Bot>}
-      {step === "name" && <><BackLink onClick={() => setStep(mode === "pickup" ? "mode" : "location")} /><Input placeholder="Votre prénom" autoComplete="given-name" onSubmit={submitName} /></>}
-      {past("name") && <User>{name}</User>}
+      {step === "name" && <Input placeholder="Votre prénom" autoComplete="given-name" onSubmit={submitName} />}
+      {past("name") && <User onEdit={() => setStep("name")}>{name}</User>}
 
       {/* ── PHONE ── */}
       {past("name") && <Bot delay={200}>Enchanté {name} ! 📱 Votre numéro pour {mode === "pickup" ? "vous prévenir" : "le livreur"} ?</Bot>}
-      {step === "phone" && <><BackLink onClick={() => setStep("name")} /><Input placeholder="70 XX XX XX" type="tel" autoComplete="tel" onSubmit={submitPhone} /></>}
-      {past("phone") && <User>{phone}</User>}
+      {step === "phone" && <Input placeholder="70 XX XX XX" type="tel" autoComplete="tel" onSubmit={submitPhone} />}
+      {past("phone") && <User onEdit={() => setStep("phone")}>{phone}</User>}
 
       {/* ── CROSS-SELL ── */}
       {past("phone") && (
@@ -322,13 +326,13 @@ export default function ConversationalCheckout({
           </div>
         </Bot>
       )}
-      {step === "crosssell" && <><BackLink onClick={() => setStep("phone")} /><Choices options={[{ id: "yes", label: "Oui, j'ajoute !", icon: "✓" }, { id: "no", label: "Non merci" }]} onSelect={(id) => handleCrossSell(id === "yes")} /></>}
-      {past("crosssell") && <User>{crossSellAccepted ? "✓ Deguê ajouté !" : "Non merci"}</User>}
+      {step === "crosssell" && <Choices options={[{ id: "yes", label: "Oui, j'ajoute !", icon: "✓" }, { id: "no", label: "Non merci" }]} onSelect={(id) => handleCrossSell(id === "yes")} />}
+      {past("crosssell") && <User onEdit={() => setStep("crosssell")}>{crossSellAccepted ? "✓ Deguê ajouté !" : "Non merci"}</User>}
 
       {/* ── PAYMENT ── */}
       {past("crosssell") && <Bot delay={200}>Comment souhaitez-vous payer ?</Bot>}
-      {step === "payment" && <><BackLink onClick={() => setStep("crosssell")} /><Choices options={PAYMENTS.map(p => ({ id: p.id, label: p.label, icon: p.icon, sub: p.desc }))} onSelect={choosePayment} /></>}
-      {past("payment") && payment && <User>{PAYMENTS.find(p => p.id === payment)?.icon} {PAYMENTS.find(p => p.id === payment)?.label}</User>}
+      {step === "payment" && <Choices options={PAYMENTS.map(p => ({ id: p.id, label: p.label, icon: p.icon, sub: p.desc }))} onSelect={choosePayment} />}
+      {past("payment") && payment && <User onEdit={() => setStep("payment")}>{PAYMENTS.find(p => p.id === payment)?.icon} {PAYMENTS.find(p => p.id === payment)?.label}</User>}
 
       {/* ── SUMMARY ── */}
       {past("payment") && (
@@ -351,7 +355,6 @@ export default function ConversationalCheckout({
       )}
       {step === "summary" && (
         <div style={{ animation: "fadeUp 0.25s ease-out" }}>
-          <BackLink onClick={() => setStep("payment")} />
           {error && <div className="bg-red-50 text-red-700 text-sm rounded-xl px-4 py-2 mb-2">{error}</div>}
           <button type="button" onClick={confirmOrder}
             className="w-full py-4 bg-[#FF6D01] text-white font-bold text-base rounded-xl active:scale-[0.98] transition"
