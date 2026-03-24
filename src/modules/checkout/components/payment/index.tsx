@@ -196,7 +196,7 @@ const Payment = ({
           >
             {!activeSession && isStripeLike(selectedPaymentMethod)
               ? " Enter card details"
-              : "Continue to review"}
+              : "Continuer vers le récapitulatif"}
           </Button>
         </div>
 

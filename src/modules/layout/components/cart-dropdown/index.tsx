@@ -177,7 +177,7 @@ const CartDropdown = ({
                 <div className="p-4 flex flex-col gap-y-4 text-small-regular">
                   <div className="flex items-center justify-between">
                     <span className="text-ui-fg-base font-semibold">
-                      Subtotal{" "}
+                      Sous-total{" "}
                       <span className="font-normal">(excl. taxes)</span>
                     </span>
                     <span
@@ -197,7 +197,7 @@ const CartDropdown = ({
                       size="large"
                       data-testid="go-to-cart-button"
                     >
-                      Go to cart
+                      Voir le panier
                     </Button>
                   </LocalizedClientLink>
                 </div>
@@ -208,12 +208,12 @@ const CartDropdown = ({
                   <div className="bg-gray-900 text-small-regular flex items-center justify-center w-6 h-6 rounded-full text-white">
                     <span>0</span>
                   </div>
-                  <span>Your shopping bag is empty.</span>
+                  <span>Votre panier est vide.</span>
                   <div>
                     <LocalizedClientLink href="/store">
                       <>
                         <span className="sr-only">Go to all products page</span>
-                        <Button onClick={close}>Explore products</Button>
+                        <Button onClick={close}>Explorer les produits</Button>
                       </>
                     </LocalizedClientLink>
                   </div>

@@ -30,7 +30,7 @@ const Review = ({ cart }: { cart: any }) => {
             }
           )}
         >
-          Review
+          Récapitulatif
         </Heading>
       </div>
       {isOpen && previousStepsCompleted && (

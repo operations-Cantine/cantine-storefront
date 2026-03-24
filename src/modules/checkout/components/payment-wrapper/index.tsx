@@ -15,11 +15,11 @@ const stripeKey =
   process.env.NEXT_PUBLIC_STRIPE_KEY ||
   process.env.NEXT_PUBLIC_MEDUSA_PAYMENTS_PUBLISHABLE_KEY
 
-const medusaAccountId = process.env.NEXT_PUBLIC_MEDUSA_PAYMENTS_ACCOUNT_ID
+const medusaCompteId = process.env.NEXT_PUBLIC_MEDUSA_PAYMENTS_ACCOUNT_ID
 const stripePromise = stripeKey
   ? loadStripe(
       stripeKey,
-      medusaAccountId ? { stripeAccount: medusaAccountId } : undefined
+      medusaCompteId ? { stripeCompte: medusaCompteId } : undefined
     )
   : null
 
