@@ -32,15 +32,15 @@ export default async function Home(props: {
     <>
       <Hero />
 
-      {/* Category quick links */}
+      {/* Category quick links — full bleed */}
       {categories && categories.length > 0 && (
-        <div className="content-container py-8">
-          <div className="flex gap-3 overflow-x-auto pb-2">
+        <div className="w-full overflow-x-auto py-4 px-4 bg-white border-b border-ui-border-base">
+          <div className="flex gap-2">
             {categories.map((cat) => (
               <LocalizedClientLink
                 key={cat.id}
                 href={`/categories/${cat.handle}`}
-                className="flex-shrink-0 px-6 py-3 bg-white border border-ui-border-base rounded-xl text-sm font-medium text-ui-fg-base hover:border-ui-fg-base hover:shadow-sm transition"
+                className="flex-shrink-0 px-5 py-2.5 bg-gray-100 rounded-full text-sm font-semibold text-ui-fg-base hover:bg-[#083d2a] hover:text-white transition"
               >
                 {cat.name}
               </LocalizedClientLink>
@@ -49,8 +49,8 @@ export default async function Home(props: {
         </div>
       )}
 
-      {/* Featured products */}
-      <div className="content-container py-8">
+      {/* Featured products — full bleed */}
+      <div className="w-full px-4 py-8">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-bold text-ui-fg-base">Notre Menu</h2>
           <LocalizedClientLink href="/store" className="text-sm text-ui-fg-subtle hover:text-ui-fg-base">

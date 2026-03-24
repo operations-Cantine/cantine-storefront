@@ -6,6 +6,24 @@ import { HttpTypes } from "@medusajs/types"
 // ── Types ──
 type Step = "mode" | "location" | "name" | "phone" | "crosssell" | "payment" | "summary" | "placing" | "done"
 
+const STEP_ORDER: Step[] = ["mode", "location", "name", "phone", "crosssell", "payment", "summary"]
+
+function prevStep(current: Step, mode: "delivery" | "pickup" | null): Step | null {
+  const steps = mode === "pickup"
+    ? ["mode", "name", "phone", "crosssell", "payment", "summary"]
+    : STEP_ORDER
+  const idx = steps.indexOf(current)
+  return idx > 0 ? steps[idx - 1] as Step : null
+}
+
+function BackLink({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="text-xs text-gray-400 hover:text-[#083d2a] transition" style={{ animation: "fadeUp 0.2s ease-out" }}>
+      ← Modifier
+    </button>
+  )
+}
+
 const ZONES = [
   { name: "Aci 2000", slug: "aci-2000", lat: 12.6127, lng: -8.0090, fee: 500, r: 1.5, time: 20 },
   { name: "Badalabougou", slug: "badalabougou", lat: 12.6200, lng: -7.9880, fee: 500, r: 1.5, time: 25 },
@@ -249,7 +267,9 @@ export default function ConversationalCheckout({
 
       {/* ── MODE ── */}
       <Bot>Bienvenue ! 👋 Comment souhaitez-vous recevoir votre commande ?</Bot>
-      {step === "mode" && <Choices options={[{ id: "delivery", label: "Livraison", icon: "🛵", sub: "À domicile" }, { id: "pickup", label: "Retrait en magasin", icon: "🏪", sub: "Gratuit" }]} onSelect={chooseMode} />}
+      {step === "mode" && (
+        <Choices options={[{ id: "delivery", label: "Livraison", icon: "🛵", sub: "À domicile" }, { id: "pickup", label: "Retrait en magasin", icon: "🏪", sub: "Gratuit" }]} onSelect={chooseMode} />
+      )}
       {past("mode") && <User>{mode === "pickup" ? "🏪 Retrait en magasin" : "🛵 Livraison"}</User>}
 
       {/* ── LOCATION ── */}
@@ -258,6 +278,7 @@ export default function ConversationalCheckout({
           <Bot delay={200}>{zone ? `📍 Vous êtes à ${zone.name} (${fmt(zone.fee)} livraison, ~${zone.time} min). C'est correct ?` : "📍 Localisation en cours... Sinon, choisissez votre quartier :"}</Bot>
           {step === "location" && (
             <div className="space-y-2" style={{ animation: "fadeUp 0.25s ease-out" }}>
+              <BackLink onClick={() => { setMode(null); setStep("mode") }} />
               {zone && (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => confirmZone(zone)} className="flex-1 py-3 bg-[#FF6D01] text-white font-bold rounded-xl active:scale-[0.97]" style={{ boxShadow: "0 3px 12px rgba(255,109,1,0.3)" }}>
@@ -283,12 +304,12 @@ export default function ConversationalCheckout({
 
       {/* ── NAME ── */}
       {past("location") && <Bot delay={200}>{mode === "pickup" ? "Parfait ! Comment vous appelez-vous ?" : zone ? `Super, livraison à ${zone.name} ! Comment vous appelez-vous ?` : "Comment vous appelez-vous ?"}</Bot>}
-      {step === "name" && <Input placeholder="Votre prénom" autoComplete="given-name" onSubmit={submitName} />}
+      {step === "name" && <><BackLink onClick={() => setStep(mode === "pickup" ? "mode" : "location")} /><Input placeholder="Votre prénom" autoComplete="given-name" onSubmit={submitName} /></>}
       {past("name") && <User>{name}</User>}
 
       {/* ── PHONE ── */}
       {past("name") && <Bot delay={200}>Enchanté {name} ! 📱 Votre numéro pour {mode === "pickup" ? "vous prévenir" : "le livreur"} ?</Bot>}
-      {step === "phone" && <Input placeholder="70 XX XX XX" type="tel" autoComplete="tel" onSubmit={submitPhone} />}
+      {step === "phone" && <><BackLink onClick={() => setStep("name")} /><Input placeholder="70 XX XX XX" type="tel" autoComplete="tel" onSubmit={submitPhone} /></>}
       {past("phone") && <User>{phone}</User>}
 
       {/* ── CROSS-SELL ── */}
@@ -301,12 +322,12 @@ export default function ConversationalCheckout({
           </div>
         </Bot>
       )}
-      {step === "crosssell" && <Choices options={[{ id: "yes", label: "Oui, j'ajoute !", icon: "✓" }, { id: "no", label: "Non merci" }]} onSelect={(id) => handleCrossSell(id === "yes")} />}
+      {step === "crosssell" && <><BackLink onClick={() => setStep("phone")} /><Choices options={[{ id: "yes", label: "Oui, j'ajoute !", icon: "✓" }, { id: "no", label: "Non merci" }]} onSelect={(id) => handleCrossSell(id === "yes")} /></>}
       {past("crosssell") && <User>{crossSellAccepted ? "✓ Deguê ajouté !" : "Non merci"}</User>}
 
       {/* ── PAYMENT ── */}
       {past("crosssell") && <Bot delay={200}>Comment souhaitez-vous payer ?</Bot>}
-      {step === "payment" && <Choices options={PAYMENTS.map(p => ({ id: p.id, label: p.label, icon: p.icon, sub: p.desc }))} onSelect={choosePayment} />}
+      {step === "payment" && <><BackLink onClick={() => setStep("crosssell")} /><Choices options={PAYMENTS.map(p => ({ id: p.id, label: p.label, icon: p.icon, sub: p.desc }))} onSelect={choosePayment} /></>}
       {past("payment") && payment && <User>{PAYMENTS.find(p => p.id === payment)?.icon} {PAYMENTS.find(p => p.id === payment)?.label}</User>}
 
       {/* ── SUMMARY ── */}
@@ -330,6 +351,7 @@ export default function ConversationalCheckout({
       )}
       {step === "summary" && (
         <div style={{ animation: "fadeUp 0.25s ease-out" }}>
+          <BackLink onClick={() => setStep("payment")} />
           {error && <div className="bg-red-50 text-red-700 text-sm rounded-xl px-4 py-2 mb-2">{error}</div>}
           <button type="button" onClick={confirmOrder}
             className="w-full py-4 bg-[#FF6D01] text-white font-bold text-base rounded-xl active:scale-[0.98] transition"
