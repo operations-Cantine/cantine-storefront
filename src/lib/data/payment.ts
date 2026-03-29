@@ -4,6 +4,23 @@ import { sdk } from "@lib/config"
 import { getAuthHeaders, getCacheOptions } from "./cookies"
 import { HttpTypes } from "@medusajs/types"
 
+export type PaymentConfig = {
+  orange_money_phone: string
+  moov_phone: string
+  wave_phone: string
+  whatsapp_number: string
+  fee_payer: "sender" | "receiver"
+}
+
+export async function fetchPaymentConfig(): Promise<PaymentConfig | null> {
+  return sdk.client
+    .fetch<{ payment_config: PaymentConfig | null }>(`/store/payment-config`, {
+      method: "GET",
+    })
+    .then(({ payment_config }) => payment_config)
+    .catch(() => null)
+}
+
 export const listCartPaymentMethods = async (regionId: string) => {
   const headers = {
     ...(await getAuthHeaders()),

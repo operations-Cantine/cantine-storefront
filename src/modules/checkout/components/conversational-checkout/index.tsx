@@ -1,7 +1,8 @@
 "use client"
-import React, { useState, useEffect, useRef } from "react"
-import { updateCart, setShippingMethod, initiatePaymentSession, placeOrder } from "@lib/data/cart"
+import React, { useState, useEffect, useRef, useMemo } from "react"
+import { updateCart, addToCart, setShippingMethod, initiatePaymentSession, placeOrder } from "@lib/data/cart"
 import { HttpTypes } from "@medusajs/types"
+import { PaymentConfig } from "@lib/data/payment"
 
 // ── Types ──
 type Step = "mode" | "location" | "name" | "phone" | "crosssell" | "payment" | "summary" | "placing" | "done"
@@ -35,7 +36,9 @@ const ZONES = [
   { name: "Magnambougou", slug: "magnambougou", lat: 12.5700, lng: -8.0100, fee: 1000, r: 2.0, time: 40 },
 ]
 
-const PAYMENTS = [
+type PaymentOption = { id: string; label: string; icon: string; desc: string }
+
+const ALL_PAYMENTS: PaymentOption[] = [
   { id: "cash", label: "Espèces", icon: "💵", desc: "Payez le livreur à la réception" },
   { id: "orange_money", label: "Orange Money", icon: "🟠", desc: "Paiement mobile Orange" },
   { id: "wave", label: "Wave", icon: "🌊", desc: "Paiement mobile Wave" },
@@ -58,6 +61,67 @@ function findZone(lat: number, lng: number) {
 }
 
 const fmt = (n: number) => `${n.toLocaleString("fr-FR")} FCFA`
+
+// ── USSD Instructions ──
+function UssdInstructions({ paymentId, config, amount }: { paymentId: string; config: PaymentConfig | null; amount: number }) {
+  if (!config) return null
+  const amountStr = amount.toString()
+
+  if (paymentId === "orange_money" && config.orange_money_phone) {
+    const code = `#144#11*${config.orange_money_phone}*${amountStr}#`
+    return (
+      <div className="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-xl text-sm" style={{ animation: "fadeUp 0.25s ease-out" }}>
+        <div className="font-semibold text-orange-800 mb-1">📲 Composez sur votre téléphone :</div>
+        <a href={`tel:${encodeURIComponent(code)}`} className="block text-center font-mono text-lg font-bold text-orange-900 bg-white rounded-lg py-2 px-3 border border-orange-300 hover:bg-orange-50 transition">
+          {code}
+        </a>
+        <div className="text-xs text-orange-700 mt-2">
+          Envoyez {fmt(amount)} au {config.orange_money_phone.replace(/(\d{2})(\d{2})(\d{2})(\d{2})/, "$1 $2 $3 $4")}
+        </div>
+        {config.fee_payer === "receiver" ? (
+          <div className="text-xs text-green-700 mt-1 font-medium">✓ Frais de transfert offerts par La Cantine</div>
+        ) : (
+          <div className="text-xs text-gray-500 mt-1">Frais de transfert à votre charge</div>
+        )}
+      </div>
+    )
+  }
+
+  if (paymentId === "moov_money" && config.moov_phone) {
+    return (
+      <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm" style={{ animation: "fadeUp 0.25s ease-out" }}>
+        <div className="font-semibold text-blue-800 mb-1">📲 Composez sur votre téléphone :</div>
+        <div className="text-center font-mono text-lg font-bold text-blue-900 bg-white rounded-lg py-2 px-3 border border-blue-300">
+          *166*2*1*{config.moov_phone}*{amountStr}*PIN#
+        </div>
+        <div className="text-xs text-blue-700 mt-2">Remplacez PIN par votre code secret Moov Money</div>
+        {config.fee_payer === "receiver" ? (
+          <div className="text-xs text-green-700 mt-1 font-medium">✓ Frais de transfert offerts par La Cantine</div>
+        ) : (
+          <div className="text-xs text-gray-500 mt-1">Frais de transfert à votre charge</div>
+        )}
+      </div>
+    )
+  }
+
+  if (paymentId === "wave" && config.wave_phone) {
+    return (
+      <div className="mt-3 p-3 bg-cyan-50 border border-cyan-200 rounded-xl text-sm" style={{ animation: "fadeUp 0.25s ease-out" }}>
+        <div className="font-semibold text-cyan-800 mb-1">📲 Via l'application Wave :</div>
+        <div className="text-center text-sm text-cyan-900 bg-white rounded-lg py-2 px-3 border border-cyan-300">
+          Envoyez <span className="font-bold">{fmt(amount)}</span> au <span className="font-bold">{config.wave_phone}</span>
+        </div>
+        {config.fee_payer === "receiver" ? (
+          <div className="text-xs text-green-700 mt-2 font-medium">✓ Frais de transfert offerts par La Cantine</div>
+        ) : (
+          <div className="text-xs text-gray-500 mt-2">Frais de transfert à votre charge</div>
+        )}
+      </div>
+    )
+  }
+
+  return null
+}
 
 // ── Confetti ──
 function Confetti() {
@@ -132,10 +196,14 @@ export default function ConversationalCheckout({
   cart,
   shippingMethods,
   paymentMethods,
+  paymentConfig,
+  crossSellProducts,
 }: {
   cart: HttpTypes.StoreCart
   shippingMethods: HttpTypes.StoreCartShippingOption[]
   paymentMethods: any[]
+  paymentConfig: PaymentConfig | null
+  crossSellProducts: HttpTypes.StoreProduct[]
 }) {
   const [step, setStep] = useState<Step>("mode")
   const [mode, setMode] = useState<"delivery" | "pickup" | null>(null)
@@ -144,13 +212,39 @@ export default function ConversationalCheckout({
   const [name, setName] = useState(cart.shipping_address?.first_name || "")
   const [phone, setPhone] = useState(cart.shipping_address?.phone || "")
   const [payment, setPayment] = useState<string | null>(null)
-  const [crossSellAccepted, setCrossSellAccepted] = useState(false)
+  const [crossSellItem, setCrossSellItem] = useState<HttpTypes.StoreProduct | null>(null)
+  const [crossSellAdding, setCrossSellAdding] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confetti, setConfetti] = useState(false)
   const [orderId, setOrderId] = useState("")
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }) }, [step, zone, error])
+
+  // Auto-skip crosssell step if no products available
+  useEffect(() => {
+    if (step === "crosssell" && !crossSellOffer) setStep("payment")
+  }, [step, crossSellOffer])
+
+  // Pick a random cross-sell product on mount
+  const crossSellOffer = useMemo(() => {
+    if (!crossSellProducts.length) return null
+    return crossSellProducts[Math.floor(Math.random() * crossSellProducts.length)]
+  }, [crossSellProducts])
+
+  const crossSellPrice = crossSellOffer?.variants?.[0]?.calculated_price?.calculated_amount || 0
+  const crossSellVariantId = crossSellOffer?.variants?.[0]?.id
+
+  // Build available payment methods based on config
+  const availablePayments = useMemo(() => {
+    return ALL_PAYMENTS.filter((p) => {
+      if (p.id === "cash" || p.id === "carte_cantine") return true
+      if (p.id === "orange_money") return !!paymentConfig?.orange_money_phone
+      if (p.id === "moov_money") return !!paymentConfig?.moov_phone
+      if (p.id === "wave") return !!paymentConfig?.wave_phone
+      return true
+    })
+  }, [paymentConfig])
 
   // Find shipping option IDs
   const deliveryOption = shippingMethods.find(m => m.name?.includes("Livraison"))
@@ -160,11 +254,13 @@ export default function ConversationalCheckout({
   const items = cart.items || []
   const cartTotal = cart.item_total || 0
 
+  // WhatsApp number from config or fallback
+  const whatsappNumber = paymentConfig?.whatsapp_number || "22370196453"
+
   // ── Handlers ──
   const chooseMode = async (m: string) => {
     setMode(m as any)
     if (m === "pickup") {
-      // Set address + shipping for pickup
       await updateCart({
         email: "pos@lacantineafricaine.com",
         shipping_address: { first_name: "Client", last_name: "Retrait", address_1: "Retrait en magasin", city: "Bamako", country_code: "ml", postal_code: "BP", phone: "" },
@@ -174,7 +270,6 @@ export default function ConversationalCheckout({
       setStep("name")
     } else {
       setStep("location")
-      // Auto-geolocate
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (pos) => { const z = findZone(pos.coords.latitude, pos.coords.longitude); setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }); setZone(z); },
@@ -209,16 +304,27 @@ export default function ConversationalCheckout({
     setStep("crosssell")
   }
 
-  const handleCrossSell = (accepted: boolean) => {
-    setCrossSellAccepted(accepted)
+  const handleCrossSell = async (accepted: boolean) => {
+    if (accepted && crossSellVariantId) {
+      setCrossSellAdding(true)
+      try {
+        await addToCart({ variantId: crossSellVariantId, quantity: 1, countryCode: "ml" })
+        setCrossSellItem(crossSellOffer)
+      } catch {
+        // Silently fail — cross-sell is optional
+      }
+      setCrossSellAdding(false)
+    }
     setStep("payment")
   }
 
   const choosePayment = async (p: string) => {
     setPayment(p)
-    // Init payment session with system default provider
     try {
-      await initiatePaymentSession(cart, { provider_id: "pp_system_default" })
+      await Promise.all([
+        initiatePaymentSession(cart, { provider_id: "pp_system_default" }),
+        updateCart({ metadata: { ...cart.metadata, payment_method: p } }),
+      ])
     } catch {}
     setStep("summary")
   }
@@ -244,13 +350,17 @@ export default function ConversationalCheckout({
   }
 
   const shippingFee = mode === "pickup" ? 0 : (zone?.fee || 500)
-  const total = cartTotal + shippingFee
+  const crossSellTotal = crossSellItem ? crossSellPrice : 0
+  const total = cartTotal + shippingFee + crossSellTotal
 
   // ── Render ──
   const past = (s: Step) => {
     const order: Step[] = ["mode", "location", "name", "phone", "crosssell", "payment", "summary", "placing", "done"]
     return order.indexOf(step) > order.indexOf(s)
   }
+
+  const paymentLabel = (id: string | null) => availablePayments.find(p => p.id === id)
+  const hasCrossSell = !!crossSellOffer
 
   return (
     <div className="max-w-lg mx-auto space-y-3 py-4">
@@ -317,22 +427,44 @@ export default function ConversationalCheckout({
       {past("phone") && <User onEdit={() => setStep("phone")}>{phone}</User>}
 
       {/* ── CROSS-SELL ── */}
-      {past("phone") && (
+      {past("phone") && hasCrossSell && (
         <Bot delay={300}>
           <div>Un petit extra ? 😋</div>
           <div className="mt-2 p-2 bg-gray-50 rounded-lg flex items-center gap-3">
-            <div className="text-2xl">🍮</div>
-            <div className="flex-1"><div className="font-semibold text-sm">Deguê</div><div className="text-xs text-gray-500">Dessert traditionnel malien · 500 FCFA</div></div>
+            {crossSellOffer!.thumbnail ? (
+              <img src={crossSellOffer!.thumbnail} alt={crossSellOffer!.title} className="w-12 h-12 rounded-lg object-cover" />
+            ) : (
+              <div className="w-12 h-12 rounded-lg bg-gray-200 flex items-center justify-center text-2xl">🍽️</div>
+            )}
+            <div className="flex-1">
+              <div className="font-semibold text-sm">{crossSellOffer!.title}</div>
+              <div className="text-xs text-gray-500">{crossSellOffer!.subtitle || crossSellOffer!.description || ""} · {fmt(crossSellPrice)}</div>
+            </div>
           </div>
         </Bot>
       )}
-      {step === "crosssell" && <Choices options={[{ id: "yes", label: "Oui, j'ajoute !", icon: "✓" }, { id: "no", label: "Non merci" }]} onSelect={(id) => handleCrossSell(id === "yes")} />}
-      {past("crosssell") && <User onEdit={() => setStep("crosssell")}>{crossSellAccepted ? "✓ Deguê ajouté !" : "Non merci"}</User>}
+      {past("phone") && !hasCrossSell && <>{/* No cross-sell products available, skip */}</>}
+      {step === "crosssell" && hasCrossSell && (
+        <Choices
+          options={[
+            { id: "yes", label: crossSellAdding ? "Ajout..." : "Oui, j'ajoute !", icon: "✓" },
+            { id: "no", label: "Non merci" },
+          ]}
+          onSelect={(id) => handleCrossSell(id === "yes")}
+        />
+      )}
+      {/* Auto-skip crosssell if no products available */}
+      {past("crosssell") && <User onEdit={() => setStep("crosssell")}>{crossSellItem ? `✓ ${crossSellItem.title} ajouté !` : "Non merci"}</User>}
 
       {/* ── PAYMENT ── */}
       {past("crosssell") && <Bot delay={200}>Comment souhaitez-vous payer ?</Bot>}
-      {step === "payment" && <Choices options={PAYMENTS.map(p => ({ id: p.id, label: p.label, icon: p.icon, sub: p.desc }))} onSelect={choosePayment} />}
-      {past("payment") && payment && <User onEdit={() => setStep("payment")}>{PAYMENTS.find(p => p.id === payment)?.icon} {PAYMENTS.find(p => p.id === payment)?.label}</User>}
+      {step === "payment" && <Choices options={availablePayments.map(p => ({ id: p.id, label: p.label, icon: p.icon, sub: p.desc }))} onSelect={choosePayment} />}
+      {past("payment") && payment && (
+        <>
+          <User onEdit={() => setStep("payment")}>{paymentLabel(payment)?.icon} {paymentLabel(payment)?.label}</User>
+          <UssdInstructions paymentId={payment} config={paymentConfig} amount={total} />
+        </>
+      )}
 
       {/* ── SUMMARY ── */}
       {past("payment") && (
@@ -344,13 +476,18 @@ export default function ConversationalCheckout({
               <span className="tabular-nums">{fmt(item.unit_price * item.quantity)}</span>
             </div>
           ))}
-          {crossSellAccepted && <div className="flex justify-between text-sm py-0.5"><span>1× Deguê</span><span className="tabular-nums">{fmt(500)}</span></div>}
+          {crossSellItem && (
+            <div className="flex justify-between text-sm py-0.5">
+              <span>1× {crossSellItem.title}</span>
+              <span className="tabular-nums">{fmt(crossSellPrice)}</span>
+            </div>
+          )}
           <div className="border-t border-gray-200 mt-2 pt-2 space-y-0.5 text-sm">
             {mode === "delivery" && <div className="flex justify-between"><span>Livraison ({zone?.name})</span><span className="tabular-nums">{fmt(shippingFee)}</span></div>}
             {mode === "pickup" && <div className="flex justify-between"><span>Retrait en magasin</span><span className="text-green-600">Gratuit</span></div>}
-            <div className="flex justify-between font-bold text-base pt-1"><span>Total</span><span className="text-[#083d2a]">{fmt(total + (crossSellAccepted ? 500 : 0))}</span></div>
+            <div className="flex justify-between font-bold text-base pt-1"><span>Total</span><span className="text-[#083d2a]">{fmt(total)}</span></div>
           </div>
-          <div className="text-xs text-gray-500 mt-2">Paiement: {PAYMENTS.find(p => p.id === payment)?.label}</div>
+          <div className="text-xs text-gray-500 mt-2">Paiement: {paymentLabel(payment)?.label}</div>
         </Bot>
       )}
       {step === "summary" && (
@@ -382,7 +519,7 @@ export default function ConversationalCheckout({
             {mode === "pickup" ? "Prête dans ~15 min au restaurant" : `Livraison à ${zone?.name} dans ~${zone?.time} min`}
           </div>
           <div className="mt-4 text-sm text-gray-500">📱 Vous recevrez un message WhatsApp de confirmation</div>
-          <a href={`https://wa.me/22360611097?text=Commande%20%23${orderId}`} target="_blank" rel="noreferrer"
+          <a href={`https://wa.me/${whatsappNumber}?text=Commande%20%23${orderId}`} target="_blank" rel="noreferrer"
             className="inline-block mt-4 px-6 py-3 bg-[#25D366] text-white font-semibold rounded-xl text-sm hover:brightness-110">
             Contacter sur WhatsApp
           </a>

@@ -1,7 +1,8 @@
 import { retrieveCart } from "@lib/data/cart"
 import { retrieveCustomer } from "@lib/data/customer"
 import { listCartShippingMethods } from "@lib/data/fulfillment"
-import { listCartPaymentMethods } from "@lib/data/payment"
+import { listCartPaymentMethods, fetchPaymentConfig } from "@lib/data/payment"
+import { listProducts } from "@lib/data/products"
 import ConversationalCheckout from "@modules/checkout/components/conversational-checkout"
 import { Metadata } from "next"
 import { notFound } from "next/navigation"
@@ -17,9 +18,30 @@ export default async function Checkout() {
     return notFound()
   }
 
-  const customer = await retrieveCustomer()
-  const shippingMethods = await listCartShippingMethods(cart.id) || []
-  const paymentMethods = await listCartPaymentMethods(cart.region?.id ?? "") || []
+  const [customer, shippingMethods, paymentMethods, paymentConfig, crossSellData] =
+    await Promise.all([
+      retrieveCustomer(),
+      listCartShippingMethods(cart.id).then((r) => r || []),
+      listCartPaymentMethods(cart.region?.id ?? "").then((r) => r || []),
+      fetchPaymentConfig(),
+      listProducts({
+        regionId: cart.region?.id,
+        queryParams: {
+          tag_id: undefined,
+          limit: 10,
+          order: "created_at",
+          fields: "*variants.calculated_price,+variants.inventory_quantity",
+        },
+      }).catch(() => ({ response: { products: [], count: 0 }, nextPage: null })),
+    ])
+
+  // Filter cross-sell: products not already in cart, with a variant, priced under 2000
+  const cartProductIds = new Set((cart.items || []).map((i: any) => i.product_id))
+  const crossSellProducts = (crossSellData.response.products || []).filter((p) => {
+    if (cartProductIds.has(p.id)) return false
+    const price = p.variants?.[0]?.calculated_price?.calculated_amount
+    return price != null && price <= 2000
+  })
 
   return (
     <div className="min-h-screen bg-[#faf9f5]">
@@ -38,6 +60,8 @@ export default async function Checkout() {
           cart={cart}
           shippingMethods={shippingMethods}
           paymentMethods={paymentMethods}
+          paymentConfig={paymentConfig}
+          crossSellProducts={crossSellProducts}
         />
       </div>
     </div>
