@@ -374,8 +374,10 @@ export default function ConversationalCheckout({
         initiatePaymentSession(cart, { provider_id: "pp_system_default" }),
         updateCart({ metadata: { ...cart.metadata, payment_method: p } }),
       ])
-    } catch {}
-    setStep("summary")
+      setStep("summary")
+    } catch (e: any) {
+      setError(e.message || "Erreur lors du paiement. Réessayez.")
+    }
   }
 
   const confirmOrder = async () => {
@@ -502,8 +504,8 @@ export default function ConversationalCheckout({
           onSelect={(id) => handleCrossSell(id === "yes")}
         />
       )}
-      {/* Auto-skip crosssell if no products available */}
-      {past("crosssell") && <User onEdit={() => setStep("crosssell")}>{crossSellItem ? `✓ ${crossSellItem.title} ajouté !` : "Non merci"}</User>}
+      {/* Show user response only if cross-sell was actually shown */}
+      {past("crosssell") && hasCrossSell && <User onEdit={() => setStep("crosssell")}>{crossSellItem ? `✓ ${crossSellItem.title} ajouté !` : "Non merci"}</User>}
 
       {/* ── PAYMENT ── */}
       {past("crosssell") && <Bot delay={200}>Comment souhaitez-vous payer ?</Bot>}
