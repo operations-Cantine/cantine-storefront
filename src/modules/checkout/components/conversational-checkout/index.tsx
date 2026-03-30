@@ -438,7 +438,6 @@ export default function ConversationalCheckout({
 
   const paymentLabel = (id: string | null) => availablePayments.find(p => p.id === id)
   const hasCrossSell = !!crossSellOffer
-  const crossSellDone = !!crossSellAccepted || crossSellDeclined
 
   return (
     <div className="max-w-lg mx-auto space-y-3 py-4">
