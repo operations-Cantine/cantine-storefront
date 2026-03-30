@@ -72,8 +72,9 @@ function UssdInstructions({ paymentId, config, amount }: { paymentId: string; co
     return (
       <div className="mt-3 p-3 bg-orange-50 border border-orange-200 rounded-xl text-sm" style={{ animation: "fadeUp 0.25s ease-out" }}>
         <div className="font-semibold text-orange-800 mb-1">📲 Composez sur votre téléphone :</div>
-        <a href={`tel:${encodeURIComponent(code)}`} className="block text-center font-mono text-lg font-bold text-orange-900 bg-white rounded-lg py-2 px-3 border border-orange-300 hover:bg-orange-50 transition">
-          {code}
+        <a href={`tel:${encodeURIComponent(code)}`} className="block text-center font-mono text-lg font-bold text-white bg-orange-600 rounded-lg py-3 px-3 hover:bg-orange-700 active:scale-[0.98] transition shadow-sm">
+          📞 {code}
+          <span className="block text-xs font-sans font-medium mt-1 opacity-90">Appuyez pour composer</span>
         </a>
         <div className="text-xs text-orange-700 mt-2">
           Envoyez {fmt(amount)} au {config.orange_money_phone.replace(/(\d{2})(\d{2})(\d{2})(\d{2})/, "$1 $2 $3 $4")}
@@ -212,8 +213,10 @@ export default function ConversationalCheckout({
   const [name, setName] = useState(cart.shipping_address?.first_name || "")
   const [phone, setPhone] = useState(cart.shipping_address?.phone || "")
   const [payment, setPayment] = useState<string | null>(null)
-  const [crossSellItem, setCrossSellItem] = useState<HttpTypes.StoreProduct | null>(null)
+  const [crossSellAccepted, setCrossSellAccepted] = useState<HttpTypes.StoreProduct | null>(null)
+  const [crossSellDeclined, setCrossSellDeclined] = useState(false)
   const [crossSellAdding, setCrossSellAdding] = useState(false)
+  const crossSellLockedRef = useRef<HttpTypes.StoreProduct | null | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
   const [confetti, setConfetti] = useState(false)
   const [orderId, setOrderId] = useState("")
@@ -221,9 +224,15 @@ export default function ConversationalCheckout({
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }) }, [step, zone, error])
 
-  // ── Smart cross-sell: pick a complementary product ──
+  // ── Smart cross-sell: pick a complementary product (locked on first compute) ──
   const crossSellOffer = useMemo(() => {
-    if (!allProducts.length) return null
+    // Once locked, never recompute — prevents Math.random() instability on re-render
+    if (crossSellLockedRef.current !== undefined) return crossSellLockedRef.current
+
+    if (!allProducts.length) {
+      crossSellLockedRef.current = null
+      return null
+    }
 
     const cartProductIds = new Set((cart.items || []).map((i: any) => i.product_id))
     const cartCategoryHandles = new Set(
@@ -238,7 +247,11 @@ export default function ConversationalCheckout({
       if (cartProductIds.has(p.id)) return false
       return p.variants?.[0]?.calculated_price?.calculated_amount != null
     })
-    if (!available.length) return null
+
+    if (!available.length) {
+      crossSellLockedRef.current = null
+      return null
+    }
 
     // Categorize available products
     const byCategory = (handle: string) =>
@@ -270,10 +283,21 @@ export default function ConversationalCheckout({
     if (!candidates.length) {
       candidates = byCategory("sauces")
     }
-    if (!candidates.length) return null
 
-    // Pick a random one from the best category
-    return candidates[Math.floor(Math.random() * candidates.length)]
+    if (!candidates.length) {
+      crossSellLockedRef.current = null
+      return null
+    }
+
+    // Pick cheapest from the best category (deterministic, no Math.random)
+    candidates.sort((a, b) => {
+      const pa = a.variants?.[0]?.calculated_price?.calculated_amount || 0
+      const pb = b.variants?.[0]?.calculated_price?.calculated_amount || 0
+      return pa - pb
+    })
+    const picked = candidates[0]
+    crossSellLockedRef.current = picked
+    return picked
   }, [allProducts, cart.items])
 
   // Auto-skip crosssell step if no products available
@@ -354,15 +378,17 @@ export default function ConversationalCheckout({
   }
 
   const handleCrossSell = async (accepted: boolean) => {
-    if (accepted && crossSellVariantId) {
+    if (accepted && crossSellVariantId && crossSellOffer) {
       setCrossSellAdding(true)
       try {
         await addToCart({ variantId: crossSellVariantId, quantity: 1, countryCode: "ml" })
-        setCrossSellItem(crossSellOffer)
+        setCrossSellAccepted(crossSellOffer)
       } catch {
         // Silently fail — cross-sell is optional
       }
       setCrossSellAdding(false)
+    } else {
+      setCrossSellDeclined(true)
     }
     setStep("payment")
   }
@@ -401,7 +427,7 @@ export default function ConversationalCheckout({
   }
 
   const shippingFee = mode === "pickup" ? 0 : (zone?.fee || 500)
-  const crossSellTotal = crossSellItem ? crossSellPrice : 0
+  const crossSellTotal = crossSellAccepted ? crossSellPrice : 0
   const total = cartTotal + shippingFee + crossSellTotal
 
   // ── Render ──
@@ -412,6 +438,7 @@ export default function ConversationalCheckout({
 
   const paymentLabel = (id: string | null) => availablePayments.find(p => p.id === id)
   const hasCrossSell = !!crossSellOffer
+  const crossSellDone = !!crossSellAccepted || crossSellDeclined
 
   return (
     <div className="max-w-lg mx-auto space-y-3 py-4">
@@ -505,7 +532,7 @@ export default function ConversationalCheckout({
         />
       )}
       {/* Show user response only if cross-sell was actually shown */}
-      {past("crosssell") && hasCrossSell && <User onEdit={() => setStep("crosssell")}>{crossSellItem ? `✓ ${crossSellItem.title} ajouté !` : "Non merci"}</User>}
+      {past("crosssell") && hasCrossSell && <User onEdit={() => setStep("crosssell")}>{crossSellAccepted ? `✓ ${crossSellAccepted.title} ajouté !` : "Non merci"}</User>}
 
       {/* ── PAYMENT ── */}
       {past("crosssell") && <Bot delay={200}>Comment souhaitez-vous payer ?</Bot>}
@@ -527,9 +554,9 @@ export default function ConversationalCheckout({
               <span className="tabular-nums">{fmt(item.unit_price * item.quantity)}</span>
             </div>
           ))}
-          {crossSellItem && (
+          {crossSellAccepted && (
             <div className="flex justify-between text-sm py-0.5">
-              <span>1× {crossSellItem.title}</span>
+              <span>1× {crossSellAccepted.title}</span>
               <span className="tabular-nums">{fmt(crossSellPrice)}</span>
             </div>
           )}
