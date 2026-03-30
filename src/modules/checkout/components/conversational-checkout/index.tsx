@@ -197,13 +197,13 @@ export default function ConversationalCheckout({
   shippingMethods,
   paymentMethods,
   paymentConfig,
-  crossSellProducts,
+  allProducts,
 }: {
   cart: HttpTypes.StoreCart
   shippingMethods: HttpTypes.StoreCartShippingOption[]
   paymentMethods: any[]
   paymentConfig: PaymentConfig | null
-  crossSellProducts: HttpTypes.StoreProduct[]
+  allProducts: HttpTypes.StoreProduct[]
 }) {
   const [step, setStep] = useState<Step>("mode")
   const [mode, setMode] = useState<"delivery" | "pickup" | null>(null)
@@ -221,16 +221,65 @@ export default function ConversationalCheckout({
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }) }, [step, zone, error])
 
+  // ── Smart cross-sell: pick a complementary product ──
+  const crossSellOffer = useMemo(() => {
+    if (!allProducts.length) return null
+
+    const cartProductIds = new Set((cart.items || []).map((i: any) => i.product_id))
+    const cartCategoryHandles = new Set(
+      (cart.items || []).flatMap((i: any) => {
+        const product = allProducts.find((p) => p.id === i.product_id)
+        return (product?.categories || []).map((c: any) => c.handle)
+      })
+    )
+
+    // Available = not already in cart, has a variant with price
+    const available = allProducts.filter((p) => {
+      if (cartProductIds.has(p.id)) return false
+      return p.variants?.[0]?.calculated_price?.calculated_amount != null
+    })
+    if (!available.length) return null
+
+    // Categorize available products
+    const byCategory = (handle: string) =>
+      available.filter((p) => (p.categories || []).some((c: any) => c.handle === handle))
+
+    const MAINS = ["sandwiches", "combos", "riz-et-plats"]
+    const hasMains = MAINS.some((h) => cartCategoryHandles.has(h))
+    const hasDrinks = cartCategoryHandles.has("boissons")
+    const hasDesserts = cartCategoryHandles.has("desserts-et-snacks")
+
+    // Priority order: complement what's missing
+    let candidates: HttpTypes.StoreProduct[] = []
+    if (hasMains && !hasDrinks) {
+      candidates = byCategory("boissons")
+    }
+    if (!candidates.length && hasMains && !hasDesserts) {
+      candidates = byCategory("desserts-et-snacks")
+    }
+    if (!candidates.length && hasDrinks && !hasMains) {
+      candidates = byCategory("sandwiches")
+    }
+    if (!candidates.length && !hasDesserts) {
+      candidates = byCategory("desserts-et-snacks")
+    }
+    if (!candidates.length && !hasDrinks) {
+      candidates = byCategory("boissons")
+    }
+    // Last resort: sauces as add-on
+    if (!candidates.length) {
+      candidates = byCategory("sauces")
+    }
+    if (!candidates.length) return null
+
+    // Pick a random one from the best category
+    return candidates[Math.floor(Math.random() * candidates.length)]
+  }, [allProducts, cart.items])
+
   // Auto-skip crosssell step if no products available
   useEffect(() => {
     if (step === "crosssell" && !crossSellOffer) setStep("payment")
   }, [step, crossSellOffer])
-
-  // Pick a random cross-sell product on mount
-  const crossSellOffer = useMemo(() => {
-    if (!crossSellProducts.length) return null
-    return crossSellProducts[Math.floor(Math.random() * crossSellProducts.length)]
-  }, [crossSellProducts])
 
   const crossSellPrice = crossSellOffer?.variants?.[0]?.calculated_price?.calculated_amount || 0
   const crossSellVariantId = crossSellOffer?.variants?.[0]?.id

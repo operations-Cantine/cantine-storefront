@@ -27,21 +27,14 @@ export default async function Checkout() {
       listProducts({
         regionId: cart.region?.id,
         queryParams: {
-          tag_id: undefined,
-          limit: 10,
-          order: "created_at",
-          fields: "*variants.calculated_price,+variants.inventory_quantity",
+          limit: 100,
+          fields: "*variants.calculated_price,+variants.inventory_quantity,*categories",
         },
       }).catch(() => ({ response: { products: [], count: 0 }, nextPage: null })),
     ])
 
-  // Filter cross-sell: products not already in cart, with a variant, priced under 2000
-  const cartProductIds = new Set((cart.items || []).map((i: any) => i.product_id))
-  const crossSellProducts = (crossSellData.response.products || []).filter((p) => {
-    if (cartProductIds.has(p.id)) return false
-    const price = p.variants?.[0]?.calculated_price?.calculated_amount
-    return price != null && price <= 2000
-  })
+  // Pass all products — the component picks the smart cross-sell
+  const allProducts = crossSellData.response.products || []
 
   return (
     <div className="min-h-screen bg-[#faf9f5]">
@@ -61,7 +54,7 @@ export default async function Checkout() {
           shippingMethods={shippingMethods}
           paymentMethods={paymentMethods}
           paymentConfig={paymentConfig}
-          crossSellProducts={crossSellProducts}
+          allProducts={allProducts}
         />
       </div>
     </div>
