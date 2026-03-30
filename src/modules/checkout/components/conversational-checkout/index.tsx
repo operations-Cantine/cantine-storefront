@@ -427,8 +427,8 @@ export default function ConversationalCheckout({
   }
 
   const shippingFee = mode === "pickup" ? 0 : (zone?.fee || 500)
-  const crossSellTotal = crossSellAccepted ? crossSellPrice : 0
-  const total = cartTotal + shippingFee + crossSellTotal
+  // Don't add crossSellTotal — addToCart already updated cart.item_total via revalidation
+  const total = cartTotal + shippingFee
 
   // ── Render ──
   const past = (s: Step) => {
@@ -553,12 +553,6 @@ export default function ConversationalCheckout({
               <span className="tabular-nums">{fmt(item.unit_price * item.quantity)}</span>
             </div>
           ))}
-          {crossSellAccepted && (
-            <div className="flex justify-between text-sm py-0.5">
-              <span>1× {crossSellAccepted.title}</span>
-              <span className="tabular-nums">{fmt(crossSellPrice)}</span>
-            </div>
-          )}
           <div className="border-t border-gray-200 mt-2 pt-2 space-y-0.5 text-sm">
             {mode === "delivery" && <div className="flex justify-between"><span>Livraison ({zone?.name})</span><span className="tabular-nums">{fmt(shippingFee)}</span></div>}
             {mode === "pickup" && <div className="flex justify-between"><span>Retrait en magasin</span><span className="text-green-600">Gratuit</span></div>}
